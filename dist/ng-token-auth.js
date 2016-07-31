@@ -4,7 +4,7 @@ if (typeof module !== 'undefined' && typeof exports !== 'undefined' && module.ex
 
 angular.module('ng-token-auth', ['ipCookie']).provider('$auth', function() {
   var configs, defaultConfigName;
-  configs = {
+  configs = [{
     "default": {
       apiUrl: '/api',
       signOutUrl: '/auth/sign_out',
@@ -63,7 +63,8 @@ angular.module('ng-token-auth', ['ipCookie']).provider('$auth', function() {
         google: '/auth/google_oauth2'
       }
     }
-  };
+  }];
+
   defaultConfigName = "default";
   return {
     configure: function(params) {
@@ -79,14 +80,13 @@ angular.module('ng-token-auth', ['ipCookie']).provider('$auth', function() {
               defaultConfigName = label;
             }
           }
-          defaults = angular.copy(configs["default"]);
+          defaults = angular.copy(configs[0]["default"]);
           fullConfig = {};
           fullConfig[label] = angular.extend(defaults, conf[label]);
-          angular.extend(configs, fullConfig);
+          configs.push(fullConfig);
         }
-        if (defaultConfigName !== "default") {
-          delete configs["default"];
-        }
+        // delete default
+        configs.splice(0, 1);
       } else if (params instanceof Object) {
         angular.extend(configs["default"], params);
       } else {
@@ -113,6 +113,9 @@ angular.module('ng-token-auth', ['ipCookie']).provider('$auth', function() {
               if ($window.addEventListener) {
                 return $window.addEventListener("message", this.listener, false);
               }
+            },
+            authHeadersKey: function() {
+              return this.getConfig().configName + "_auth_headers"
             },
             cancel: function(reason) {
               if (this.requestCredentialsPollingTimer != null) {
@@ -167,7 +170,7 @@ angular.module('ng-token-auth', ['ipCookie']).provider('$auth', function() {
               $rootScope.updateAccount = angular.bind(this, this.updateAccount);
               if (this.getConfig().validateOnPageLoad) {
                 return this.validateUser({
-                  config: this.getSavedConfig()
+                  config: this.getConfig()
                 });
               }
             },
@@ -179,7 +182,7 @@ angular.module('ng-token-auth', ['ipCookie']).provider('$auth', function() {
               successUrl = this.getResultOrValue(this.getConfig(opts.config).confirmationSuccessUrl);
               angular.extend(params, {
                 confirm_success_url: successUrl,
-                config_name: this.getCurrentConfigName(opts.config)
+                config_name: this.getConfig().configName
               });
               return $http.post(this.apiUrl(opts.config) + this.getConfig(opts.config).emailRegistrationPath, params).success(function(resp) {
                 return $rootScope.$broadcast('auth:registration-email-success', params);
@@ -215,7 +218,7 @@ angular.module('ng-token-auth', ['ipCookie']).provider('$auth', function() {
               return this.dfd.promise;
             },
             userIsAuthenticated: function() {
-              return this.retrieveData('auth_headers') && this.user.signedIn && !this.tokenHasExpired();
+              return this.retrieveData(this.authHeadersKey()) && this.user.signedIn && !this.tokenHasExpired();
             },
             requestPasswordReset: function(params, opts) {
               var successUrl;
@@ -248,7 +251,7 @@ angular.module('ng-token-auth', ['ipCookie']).provider('$auth', function() {
                 return function(resp) {
                   var curHeaders, key, newHeaders, updateResponse, val, _ref;
                   updateResponse = _this.getConfig().handleAccountUpdateResponse(resp);
-                  curHeaders = _this.retrieveData('auth_headers');
+                  curHeaders = _this.retrieveData(this.authHeadersKey());
                   angular.extend(_this.user, updateResponse);
                   if (curHeaders) {
                     newHeaders = {};
@@ -429,7 +432,7 @@ angular.module('ng-token-auth', ['ipCookie']).provider('$auth', function() {
               if (opts == null) {
                 opts = {};
               }
-              configName = opts.config;
+              configName = this.getConfig().configName;
               if (this.dfd == null) {
                 this.initDfd();
                 if (this.userIsAuthenticated()) {
@@ -462,14 +465,13 @@ angular.module('ng-token-auth', ['ipCookie']).provider('$auth', function() {
                       url += '?' + this.buildQueryString(params);
                     }
                     $location.url(url);
-                  } else if (this.retrieveData('currentConfigName')) {
-                    configName = this.retrieveData('currentConfigName');
                   }
+
                   if (this.getConfig().forceValidateToken) {
                     this.validateToken({
                       config: configName
                     });
-                  } else if (!isEmpty(this.retrieveData('auth_headers'))) {
+                  } else if (!isEmpty(this.retrieveData(this.authHeadersKey()))) {
                     if (this.tokenHasExpired()) {
                       $rootScope.$broadcast('auth:session-expired');
                       this.rejectDfd({
@@ -542,7 +544,7 @@ angular.module('ng-token-auth', ['ipCookie']).provider('$auth', function() {
               return expiry && expiry < now;
             },
             getExpiry: function() {
-              return this.getConfig().parseExpiry(this.retrieveData('auth_headers') || {});
+              return this.getConfig().parseExpiry(this.retrieveData(this.authHeadersKey()) || {});
             },
             invalidateTokens: function() {
               var key, val, _ref;
@@ -555,7 +557,7 @@ angular.module('ng-token-auth', ['ipCookie']).provider('$auth', function() {
               if (this.timer != null) {
                 $interval.cancel(this.timer);
               }
-              return this.deleteData('auth_headers');
+              return this.deleteData(this.authHeadersKey());
             },
             signOut: function() {
               return $http["delete"](this.apiUrl() + this.getConfig().signOutUrl).success((function(_this) {
@@ -580,7 +582,7 @@ angular.module('ng-token-auth', ['ipCookie']).provider('$auth', function() {
               this.cancelOmniauthInAppBrowserListeners();
               angular.extend(this.user, user);
               this.user.signedIn = true;
-              this.user.configName = this.getCurrentConfigName();
+              this.user.configName = this.getConfig().configName;
               if (setHeader) {
                 this.setAuthHeaders(this.buildAuthHeaders({
                   token: this.user.auth_token,
@@ -627,7 +629,7 @@ angular.module('ng-token-auth', ['ipCookie']).provider('$auth', function() {
                     case 'sessionStorage':
                       return JSON.parse($window.sessionStorage.getItem(key));
                     default:
-                      return ipCookie(key);
+                      return ipCookie(key, undefined, this.getConfig().cookieOps);
                   }
                 }
               } catch (_error) {
@@ -656,8 +658,8 @@ angular.module('ng-token-auth', ['ipCookie']).provider('$auth', function() {
             },
             setAuthHeaders: function(h) {
               var expiry, newHeaders, now, result;
-              newHeaders = angular.extend(this.retrieveData('auth_headers') || {}, h);
-              result = this.persistData('auth_headers', newHeaders);
+              newHeaders = angular.extend(this.retrieveData(this.authHeadersKey()) || {}, h);
+              result = this.persistData(this.authHeadersKey(), newHeaders);
               expiry = this.getExpiry();
               now = new Date().getTime();
               if (expiry > now) {
@@ -667,7 +669,7 @@ angular.module('ng-token-auth', ['ipCookie']).provider('$auth', function() {
                 this.timer = $interval(((function(_this) {
                   return function() {
                     return _this.validateUser({
-                      config: _this.getSavedConfig()
+                      config: _this.getConfig()
                     });
                   };
                 })(this)), parseInt(expiry - now), 1);
@@ -695,8 +697,10 @@ angular.module('ng-token-auth', ['ipCookie']).provider('$auth', function() {
                 return this.getConfig(configName).apiUrl;
               }
             },
-            getConfig: function(name) {
-              return configs[this.getCurrentConfigName(name)];
+            getConfig: function() {
+              var namedConfig = configs[0];
+              var firstKey = Object.keys(namedConfig)[0];
+              return namedConfig[firstKey];
             },
             getResultOrValue: function(arg) {
               if (typeof arg === 'function') {
@@ -704,27 +708,6 @@ angular.module('ng-token-auth', ['ipCookie']).provider('$auth', function() {
               } else {
                 return arg;
               }
-            },
-            getCurrentConfigName: function(name) {
-              return name || this.getSavedConfig();
-            },
-            getSavedConfig: function() {
-              var c, key;
-              c = void 0;
-              key = 'currentConfigName';
-              if (this.hasLocalStorage()) {
-                if (c == null) {
-                  c = JSON.parse($window.localStorage.getItem(key));
-                }
-              } else if (this.hasSessionStorage()) {
-                if (c == null) {
-                  c = JSON.parse($window.sessionStorage.getItem(key));
-                }
-              }
-              if (c == null) {
-                c = ipCookie(key);
-              }
-              return c || defaultConfigName;
             },
             hasSessionStorage: function() {
               var error;
@@ -790,7 +773,7 @@ angular.module('ng-token-auth', ['ipCookie']).provider('$auth', function() {
               '$http', '$auth', function($http, $auth) {
                 var key, val, _ref, _results;
                 if (req.url.match($auth.apiUrl())) {
-                  _ref = $auth.retrieveData('auth_headers');
+                  _ref = $auth.retrieveData($auth.authHeadersKey());
                   _results = [];
                   for (key in _ref) {
                     val = _ref[key];
